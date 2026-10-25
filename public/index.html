@@ -1,0 +1,92 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>ext4 Explorer</title>
+<style>
+:root{--bg:#fafaf8;--fg:#1c1c1a;--mut:#6b6b66;--card:#fff;--bd:#d9d9d2;--ac:#0f6e56;--dead:#a32d2d;--mono:ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171716;--fg:#ececE6;--mut:#9a9a92;--card:#212120;--bd:#3a3a37;--ac:#5dcaa5;--dead:#f09595}}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px;max-width:1100px;margin-inline:auto}
+h1{font-size:20px;margin:0 0 2px}p.s{color:var(--mut);margin:0 0 14px}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:760px){.g{grid-template-columns:1fr}}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;min-width:0}
+.c h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0 0 8px;font-weight:600}
+#out{font:13px/1.45 var(--mono);height:300px;overflow:auto;white-space:pre-wrap}
+.in{display:flex;gap:6px;margin-top:8px}.in span{font:13px var(--mono);color:var(--ac);padding-top:7px}
+input{flex:1;min-width:0;font:13px var(--mono);padding:6px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg)}
+.ch{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+button{font:12px var(--mono);padding:4px 8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);border-radius:6px;cursor:pointer}button:hover{border-color:var(--ac)}
+.w{overflow-x:auto}table{border-collapse:collapse;font:12px var(--mono);width:100%}th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}th{color:var(--mut);font-weight:600}
+tr.dead td{color:var(--dead);text-decoration:line-through}.e{color:var(--ac)}.k{color:var(--mut)}
+.lay{display:flex;gap:2px;height:34px;font:10px var(--mono);margin:4px 0 8px}.lay div{display:flex;align-items:center;justify-content:center;border:1px solid var(--bd);border-radius:3px;overflow:hidden;color:var(--fg)}
+</style></head><body>
+<h1>ext4 Explorer</h1><p class="s">A simulated 200 MB ext4 image (4 KB blocks, 256-byte inodes). Run commands and watch the metadata change.</p>
+<div class="g">
+<div class="c"><h2>Shell (cwd: <span id="cwd">/</span>)</h2><div id="out"></div>
+<div class="in"><span>$</span><input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="try: help"></div>
+<div class="ch" id="chips"></div></div>
+<div class="c"><h2>Directory block of <span id="dn">/</span> (what <code>debugfs bd</code> shows)</h2><div class="w"><table id="dt"></table></div>
+<p class="k" style="font-size:12px;margin:8px 0 0">Names live here, mapped to inode numbers. The last entry’s rec_len absorbs the rest of the 4096-byte block, which is how deletion hides an entry.</p></div>
+<div class="c" style="grid-column:1/-1"><h2>Inode table (what <code>debugfs stat &lt;n&gt;</code> shows)</h2><div class="w"><table id="it"></table></div></div>
+<div class="c" style="grid-column:1/-1"><h2>On-disk layout</h2>
+<div class="lay"><div style="width:4%;background:#8884">boot</div><div style="width:6%;background:#378add55">SB</div><div style="width:6%;background:#7f77dd55">GDT</div><div style="width:6%;background:#7f77dd33">rsv</div><div style="width:4%;background:#ba751755">bb</div><div style="width:4%;background:#ba751755">ib</div><div style="width:20%;background:#1d9e7555">inode table</div><div style="width:50%;background:#8883">data blocks</div></div>
+<div style="font:11px var(--mono);color:var(--mut);margin-bottom:6px">Group 0 (blocks 0–32767). SB = superblock, GDT = group descriptors, bb/ib = block/inode bitmaps.</div>
+<div class="lay"><div style="width:6%;background:#378add55">SB′</div><div style="width:6%;background:#7f77dd55">GDT′</div><div style="width:6%;background:#7f77dd33">rsv</div><div style="width:4%;background:#ba751755">bb</div><div style="width:4%;background:#ba751755">ib</div><div style="width:20%;background:#1d9e7555">inode table</div><div style="width:54%;background:#8883">data blocks</div></div>
+<div style="font:11px var(--mono);color:var(--mut)">Group 1 (blocks 32768–51199). Holds backup superblock + GDT (sparse_super: groups 0, 1, 3, 5, 7, 9, 25…). Not to scale.</div></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let I,cwd,nx,sel;
+function reset(){I={2:{t:'d',l:3,sz:4096,ent:{'.':2,'..':2,'lost+found':11},p:'drwxr-xr-x'},11:{t:'d',l:2,sz:16384,ent:{'.':11,'..':2},p:'drwx------'}};cwd=2;nx=12;sel=2;$('out').textContent='';say('Fresh image: root = inode 2, lost+found = inode 11, first free inode = 12.\nType help.');draw()}
+function say(s){const o=$('out');o.textContent+=s+'\n';o.scrollTop=o.scrollHeight}
+function path(p){let c=p.startsWith('/')?2:cwd;const parts=p.split('/').filter(Boolean);let par=c,last=null;
+ for(let i=0;i<parts.length;i++){const d=I[c];if(!d||d.t!=='d')return{err:'Not a directory'};
+  par=c;last=parts[i];if(i===parts.length-1)return{par:c,name:last,ino:d.ent[last]};
+  c=d.ent[last];if(c===undefined)return{err:'No such file or directory'}}
+ return{par:c,name:null,ino:c}}
+function ty(n){const t=I[n].t;return{d:'d',f:'-',l:'l',p:'p'}[t]}
+function perm(n){const x=I[n];return x.t==='d'?x.p:x.t==='l'?'lrwxrwxrwx':x.t==='p'?'prw-r--r--':'-rw-r--r--'}
+function blocks(x){return x.t==='l'&&x.sz<60?0:x.t==='p'?0:x.sz===0?0:Math.ceil(x.sz/4096)*8}
+function rm1(par,name,ino){delete I[par].ent[name];const x=I[ino];x.l--;if(x.t==='d')I[par].l--;
+ if(x.l<=0||(x.t==='d')){x.l=0;x.dead=1;x.dt=new Date().toLocaleTimeString()}}
+const H=`Commands:
+ mkdir d | touch f | echo text > f | mkfifo f
+ ln a b | ln -s a b | rm f | rmdir d | cd d
+ ls -li | stat f | cat f | reset`;
+function run(line){say('$ '+line);const a=line.trim().split(/\s+/);if(!a[0])return;const c=a[0];
+ try{
+ if(c==='help')return say(H);
+ if(c==='reset')return reset();
+ if(c==='ls'){const e=I[cwd].ent;say(Object.keys(e).sort().map(k=>{const n=e[k];return String(n).padStart(4)+' '+perm(n)+' '+String(I[n].l).padStart(2)+' root root '+String(I[n].sz).padStart(6)+' '+k+(I[n].t==='l'?' -> '+I[n].tg:'')}).join('\n'));return}
+ if(c==='mkdir'||c==='touch'||c==='mkfifo'||c==='echo'){
+  let nm=a[1],txt='';if(c==='echo'){const i=a.indexOf('>');if(i<0)return say(a.slice(1).join(' '));txt=a.slice(1,i).join(' ');nm=a[i+1]}
+  if(!nm)return say(c+': missing operand');const r=path(nm);if(r.err)return say(r.err);
+  if(r.ino!==undefined){if(c==='echo'){I[r.ino].sz=txt.length+1;I[r.ino].tx=txt;return}return say(c+': File exists')}
+  const n=nx++;const d=I[r.par];
+  if(c==='mkdir'){I[n]={t:'d',l:2,sz:4096,ent:{'.':n,'..':r.par},p:'drwxr-xr-x'};d.l++}
+  else I[n]={t:c==='mkfifo'?'p':'f',l:1,sz:txt?txt.length+1:0,tx:txt};
+  d.ent[r.name]=n;sel=r.par;return say('created inode '+n)}
+ if(c==='ln'){const s=a[1]==='-s';const x=a[s?2:1],y=a[s?3:2];if(!x||!y)return say('ln: missing operand');
+  const r=path(y);if(r.err||r.ino!==undefined)return say(r.err||'ln: File exists');
+  if(s){const n=nx++;I[n]={t:'l',l:1,sz:x.length,tg:x};I[r.par].ent[r.name]=n;return say('symlink inode '+n+' -> '+x)}
+  const t=path(x);if(t.err||t.ino===undefined)return say('ln: '+x+': No such file or directory');
+  if(I[t.ino].t==='d')return say('ln: '+x+': hard link not allowed for directory');
+  I[t.ino].l++;I[r.par].ent[r.name]=t.ino;sel=r.par;return say(y+' and '+x+' now share inode '+t.ino+' (links='+I[t.ino].l+')')}
+ if(c==='rm'||c==='rmdir'){const r=path(a[1]||'');if(r.err||r.ino===undefined)return say(r.err||'No such file');
+  const x=I[r.ino];if(c==='rm'&&x.t==='d')return say('rm: is a directory');
+  if(c==='rmdir'&&(x.t!=='d'||Object.keys(x.ent).length>2))return say('rmdir: not empty / not a directory');
+  rm1(r.par,r.name,r.ino);sel=r.par;
+  return say(I[r.ino].dead?'inode '+r.ino+' freed: links=0, dtime set, bitmap bit cleared, entry merged into previous rec_len. Data blocks NOT zeroed.':'entry removed; inode '+r.ino+' still has links='+I[r.ino].l)}
+ if(c==='cd'){const r=path(a[1]||'/');if(r.err||r.ino===undefined||I[r.ino].t!=='d')return say('cd: no such directory');cwd=r.ino;sel=cwd;return}
+ if(c==='cat'){const r=path(a[1]||'');if(r.err||r.ino===undefined)return say('No such file');let n=r.ino,k=0;while(I[n].t==='l'&&k++<8){const q=path(I[n].tg);if(q.ino===undefined)return say('dangling symlink');n=q.ino}return say(I[n].tx||'')}
+ if(c==='stat'){const r=path(a[1]||'');if(r.err||r.ino===undefined)return say(r.err||'No such file');const n=r.ino,x=I[n];
+  return say(`  File: ${a[1]}${x.t==='l'?' -> '+x.tg:''}\n  Size: ${x.sz}  Blocks: ${blocks(x)}  IO Block: 4096\nDevice: 7,0  Inode: ${n}  Links: ${x.l}\nAccess: (${perm(n)})  Uid: 0  Gid: 0`)}
+ say(c+': command not found (type help)')}finally{draw()}}
+function draw(){$('cwd').textContent=pn(cwd);
+ const keys=Object.keys(I).map(Number).sort((a,b)=>a-b);
+ $('it').innerHTML='<tr><th>inode</th><th>type</th><th>links</th><th>size</th><th>blocks</th><th>mode</th><th>dtime</th></tr>'+keys.map(n=>{const x=I[n];return `<tr class="${x.dead?'dead':''}"><td>${n}</td><td>${ty(n)}</td><td>${x.l}</td><td>${x.sz}</td><td>${blocks(x)}</td><td>${perm(n)}</td><td>${x.dt||'-'}</td></tr>`}).join('');
+ let s=sel;if(!I[s]||I[s].dead)s=cwd;$('dn').textContent=pn(s);const ent=Object.entries(I[s].ent);let used=0;
+ const rows=ent.map(([k,v],i)=>{const rl=i===ent.length-1?4096-used:8+Math.ceil(k.length/4)*4;used+=rl;return `<tr><td class="e">${v}</td><td>${rl}</td><td>${k.length}</td><td>${I[v].t==='d'?2:I[v].t==='l'?7:I[v].t==='p'?5:1}</td><td>${k}</td></tr>`});
+ $('dt').innerHTML='<tr><th>inode</th><th>rec_len</th><th>name_len</th><th>ftype</th><th>name</th></tr>'+rows.join('')}
+function pn(n){if(n===2)return'/';for(const k in I){const d=I[k];if(d.t==='d'&&!d.dead)for(const [nm,v] of Object.entries(d.ent))if(v===n&&nm!=='.'&&nm!=='..'){const p=pn(+k);return(p==='/'?'':p)+'/'+nm}}return'?'}
+$('cmd').addEventListener('keydown',e=>{if(e.key==='Enter'){run(e.target.value);e.target.value=''}});
+['mkdir a','mkdir a/b','mkdir a/c','echo hello > f1','ln f1 hard1','ln -s f1 soft1','mkfifo ff','ls','stat a','rm f1','rm hard1','cat soft1'].forEach(t=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>run(t);$('chips').appendChild(b)});
+reset();
+</script></body></html>

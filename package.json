@@ -1,0 +1,7 @@
+{
+  "name": "ext4-explorer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive ext4 inode/directory/link simulator for the OS Case Study 21",
+  "scripts": { "dev": "npx serve public", "deploy": "vercel --prod" }
+}
